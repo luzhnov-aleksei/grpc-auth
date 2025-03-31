@@ -8,15 +8,13 @@ import (
 
 type AppConfig struct {
 	LogLevel   string
-	Rest       Rest
+	Grpc       GRPC
 	PostgreSQL PostgreSQL
 }
 
-type Rest struct {
-	ListenAddress string        `envconfig:"PORT" required:"true"`
-	WriteTimeout  time.Duration `envconfig:"WRITE_TIMEOUT" required:"true"`
-	ServerName    string        `envconfig:"SERVER_NAME" required:"true"`
-	Token         string        `envconfig:"TOKEN" required:"true"`
+type GRPC struct {
+	Port    string        `envconfig:"GRPC_PORT" required:"true"`
+	Timeout time.Duration `envconfig:"GRPC_TIMEOUT" required:"true"`
 }
 
 type PostgreSQL struct {

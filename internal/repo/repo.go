@@ -13,6 +13,7 @@ import (
 const (
 	registerUserQuery = `INSERT INTO users (email, username, password_Hash, first_Name, last_Name, is_Active, role ) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	checkUserQuery    = `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`
+	getUser           = `SELECT email, username, password_hash, first_name, last_name, created_at, updated_at FROM users WHERE username = $1`
 )
 
 type repository struct {
@@ -20,8 +21,10 @@ type repository struct {
 }
 
 type Repository interface {
-	RegisterUser(ctx context.Context, user UserRegister) error
+	RegisterUser(ctx context.Context, user User) error
 	CheckUserExists(ctx context.Context, username string) (bool, error)
+	GetUser(ctx context.Context, username string) (*User, error)
+	ShuttingDownPostgres() error
 }
 
 // NewRepository - создание нового экземпляра репозитория с подключением к PostgreSQL
@@ -42,16 +45,16 @@ func NewRepository(ctx context.Context, cfg config.PostgreSQL) (Repository, erro
 	)
 
 	// Парсим конфигурацию подключения
-	config, err := pgxpool.ParseConfig(connString)
+	configConnect, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse PostgreSQL config")
 	}
 
 	// Оптимизация выполнения запросов (кеширование запросов)
-	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	configConnect.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 
 	// Создаём пул соединений с базой данных
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.NewWithConfig(ctx, configConnect)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create PostgreSQL connection pool")
 	}
@@ -59,10 +62,10 @@ func NewRepository(ctx context.Context, cfg config.PostgreSQL) (Repository, erro
 	return &repository{pool}, nil
 }
 
-func (r *repository) RegisterUser(ctx context.Context, user UserRegister) error {
+func (r *repository) RegisterUser(ctx context.Context, user User) error {
 	_, err := r.pool.Exec(
-		ctx, registerUserQuery, user.Email, user.Username, user.PasswordHash,
-		user.FirstName, user.LastName, user.IsActive, user.Role)
+		ctx, registerUserQuery, user.Email, user.Username, user.HashPass,
+		user.FirstName, user.LastName)
 
 	if err != nil {
 		return errors.Wrap(err, "failed to register user")
@@ -77,4 +80,29 @@ func (r *repository) CheckUserExists(ctx context.Context, username string) (bool
 		return false, err
 	}
 	return exists, nil
+}
+
+func (r *repository) GetUser(ctx context.Context, username string) (*User, error) {
+	var user User
+	err := r.pool.QueryRow(ctx, getUser, username).Scan(
+		&user.Email,
+		&user.Username,
+		&user.HashPass,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to get user by username")
+	}
+	return &user, nil
+}
+
+func (r *repository) ShuttingDownPostgres() error {
+	if r.pool != nil {
+		r.pool.Close()
+		return nil
+	}
+	return errors.New("postgres pool is empty")
 }

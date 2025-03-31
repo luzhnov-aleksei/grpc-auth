@@ -1,11 +1,14 @@
 package repo
 
-type UserRegister struct {
-	Email        string
-	Username     string
-	PasswordHash string
-	FirstName    string
-	LastName     string
-	IsActive     bool
-	Role         string
+import "time"
+
+type User struct {
+	Email       string
+	Username    string
+	HashPass    string
+	FirstName   string
+	LastName    string
+	LastLoginAt time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
