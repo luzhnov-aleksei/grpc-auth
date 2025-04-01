@@ -1,0 +1,33 @@
+services:
+  grpc-auth:
+    build:
+      context: .
+      dockerfile: "Dockerfile"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL}
+      GRPC_PORT: ${GRPC_PORT}
+      GRPC_TIMEOUT: ${GRPC_TIMEOUT}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSL_MODE: ${DB_SSL_MODE}
+      DB_POOL_MAX_CONNS: ${DB_POOL_MAX_CONNS}
+      DB_POOL_MAX_CONN_LIFETIME: ${DB_POOL_MAX_CONN_LIFETIME}
+      DB_POOL_MAX_CONN_IDLE_TIME: ${DB_POOL_MAX_CONN_IDLE_TIME}
+    ports:
+      - "50051:50051"
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - ./data:/var/lib/postgresql/data # сохранение данных БД после удаления контейнера
+    ports:
+      - "5432:5432"

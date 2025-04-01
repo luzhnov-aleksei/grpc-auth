@@ -1,18 +1,67 @@
-package cmd
+package main
 
 import (
+	"context"
 	"fmt"
-	"google.golang.org/grpc"
+	"go.uber.org/zap"
+	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/kelseyhightower/envconfig"
+	"github.com/pkg/errors"
+	"google.golang.org/grpc"
+	"grpc-auth/internal/config"
+	customLogger "grpc-auth/internal/logger"
+	pb "grpc-auth/internal/protos"
+	"grpc-auth/internal/repo"
+	"grpc-auth/internal/service"
 )
 
 func main() {
-	lis, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		panic(err)
+	var cfg config.AppConfig
+	if err := envconfig.Process("", &cfg); err != nil {
+		log.Fatal(errors.Wrap(err, "failed to load configuration"))
 	}
+
+	logger, err := customLogger.NewLogger(cfg.LogLevel)
+	if err != nil {
+		log.Fatal(errors.Wrap(err, "error initializing logger"))
+	}
+
+	repository, err := repo.NewRepository(context.Background(), cfg.PostgreSQL)
+	if err != nil {
+		log.Fatal(errors.Wrap(err, "failed to initialize repository"))
+	}
+
 	grpcServer := grpc.NewServer()
-	pb.RegisterUserServiceServer(grpcServer, &userService{})
-	fmt.Println("gRPC server is running on port 50051")
-	grpcServer.Serve(lis)
+	authService := service.NewAuthService(repository, logger)
+	pb.RegisterAuthServiceServer(grpcServer, authService)
+
+	listen, err := net.Listen("tcp", cfg.Grpc.Port)
+	if err != nil {
+		logger.Fatal(err, "error creating listener")
+	}
+
+	go func() {
+		logger.Infof("grpc started listening on port: %s", cfg.Grpc.Port)
+		if err := grpcServer.Serve(listen); err != nil {
+			logger.Fatal("failed to serve", err)
+		}
+	}()
+
+	quitSig := make(chan os.Signal, 1)
+	signal.Notify(quitSig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	<-quitSig
+	logger.Infof("Shutting down grpc server gracefully...")
+	grpcServer.GracefulStop()
+
+	if err := repository.ShuttingDownPostgres(); err != nil {
+		log.Fatal("Error closing connection", zap.Error(err))
+	}
+
+	fmt.Println("server stopped")
+
 }

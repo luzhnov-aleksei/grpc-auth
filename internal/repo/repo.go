@@ -3,16 +3,21 @@ package repo
 import (
 	"context"
 	"fmt"
+	"github.com/golang-migrate/migrate/v4"
+	pgxMigrate "github.com/golang-migrate/migrate/v4/database/pgx"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pkg/errors"
 	"grpc-auth/internal/config"
 )
 
-// SQL-запрос на вставку задачи
 const (
-	registerUserQuery = `INSERT INTO users (email, username, password_Hash, first_Name, last_Name, is_Active, role ) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	registerUserQuery = `INSERT INTO users (email, username, password_hash, first_Name, last_Name) VALUES ($1, $2, $3, $4, $5)`
 	checkUserQuery    = `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`
+	getUser           = `SELECT email, username, password_hash, first_name, last_name, created_at, updated_at FROM users WHERE username = $1`
+	updateLoginTime   = `UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE username = $1`
 )
 
 type repository struct {
@@ -20,11 +25,13 @@ type repository struct {
 }
 
 type Repository interface {
-	RegisterUser(ctx context.Context, user UserRegister) error
+	RegisterUser(ctx context.Context, user User) error
 	CheckUserExists(ctx context.Context, username string) (bool, error)
+	GetUser(ctx context.Context, username string) (*User, error)
+	ShuttingDownPostgres() error
+	UpdateLoginTime(ctx context.Context, username string) error
 }
 
-// NewRepository - создание нового экземпляра репозитория с подключением к PostgreSQL
 func NewRepository(ctx context.Context, cfg config.PostgreSQL) (Repository, error) {
 	// Формируем строку подключения
 	connString := fmt.Sprintf(
@@ -42,27 +49,57 @@ func NewRepository(ctx context.Context, cfg config.PostgreSQL) (Repository, erro
 	)
 
 	// Парсим конфигурацию подключения
-	config, err := pgxpool.ParseConfig(connString)
+	configConnect, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse PostgreSQL config")
 	}
 
 	// Оптимизация выполнения запросов (кеширование запросов)
-	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	configConnect.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 
 	// Создаём пул соединений с базой данных
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.NewWithConfig(ctx, configConnect)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create PostgreSQL connection pool")
+	}
+
+	if err := applyMigrations(pool); err != nil {
+		return nil, errors.Wrap(err, "failed to apply migrations")
 	}
 
 	return &repository{pool}, nil
 }
 
-func (r *repository) RegisterUser(ctx context.Context, user UserRegister) error {
+func applyMigrations(pool *pgxpool.Pool) error {
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer sqlDB.Close()
+
+	driver, err := pgxMigrate.WithInstance(sqlDB, &pgxMigrate.Config{})
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize pgx migrate driver")
+	}
+
+	migrationsPath := "app/migrations"
+	m, err := migrate.NewWithDatabaseInstance(
+		fmt.Sprintf("file:///%s", migrationsPath),
+		"postgres",
+		driver,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to create migrate instance")
+	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return errors.Wrap(err, "failed to apply migrations")
+	}
+
+	return nil
+}
+
+func (r *repository) RegisterUser(ctx context.Context, user User) error {
 	_, err := r.pool.Exec(
-		ctx, registerUserQuery, user.Email, user.Username, user.PasswordHash,
-		user.FirstName, user.LastName, user.IsActive, user.Role)
+		ctx, registerUserQuery, user.Email, user.Username, user.PassHash,
+		user.FirstName, user.LastName)
 
 	if err != nil {
 		return errors.Wrap(err, "failed to register user")
@@ -77,4 +114,38 @@ func (r *repository) CheckUserExists(ctx context.Context, username string) (bool
 		return false, err
 	}
 	return exists, nil
+}
+
+func (r *repository) GetUser(ctx context.Context, username string) (*User, error) {
+	var user User
+	err := r.pool.QueryRow(ctx, getUser, username).Scan(
+		&user.Email,
+		&user.Username,
+		&user.PassHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to get user by username")
+	}
+	return &user, nil
+}
+
+func (r *repository) ShuttingDownPostgres() error {
+	if r.pool != nil {
+		r.pool.Close()
+		return nil
+	}
+	return errors.New("postgres pool is empty")
+}
+
+func (r *repository) UpdateLoginTime(ctx context.Context, username string) error {
+	_, err := r.pool.Exec(ctx, updateLoginTime, username)
+	if err != nil {
+		return fmt.Errorf("failed to update login time: %w", err)
+	}
+
+	return nil
 }
