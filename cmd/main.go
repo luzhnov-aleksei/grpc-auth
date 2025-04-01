@@ -21,25 +21,21 @@ import (
 )
 
 func main() {
-	// Загружаем конфигурацию из переменных окружения
 	var cfg config.AppConfig
 	if err := envconfig.Process("", &cfg); err != nil {
 		log.Fatal(errors.Wrap(err, "failed to load configuration"))
 	}
 
-	// Инициализация логгера
 	logger, err := customLogger.NewLogger(cfg.LogLevel)
 	if err != nil {
 		log.Fatal(errors.Wrap(err, "error initializing logger"))
 	}
 
-	// Подключение к PostgreSQL
 	repository, err := repo.NewRepository(context.Background(), cfg.PostgreSQL)
 	if err != nil {
 		log.Fatal(errors.Wrap(err, "failed to initialize repository"))
 	}
 
-	// Инициализация API
 	grpcServer := grpc.NewServer()
 	authService := service.NewAuthService(repository, logger)
 	pb.RegisterAuthServiceServer(grpcServer, authService)
@@ -57,7 +53,7 @@ func main() {
 	}()
 
 	quitSig := make(chan os.Signal, 1)
-	signal.Notify(quitSig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGKILL)
+	signal.Notify(quitSig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	<-quitSig
 	logger.Infof("Shutting down grpc server gracefully...")
 	grpcServer.GracefulStop()

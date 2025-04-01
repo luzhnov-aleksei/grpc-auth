@@ -48,17 +48,17 @@ func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*p
 	errReg := s.repo.RegisterUser(ctx, repo.User{
 		Email:     req.GetEmail(),
 		Username:  req.GetUsername(),
-		HashPass:  string(hashPass),
+		PassHash:  string(hashPass),
 		FirstName: req.GetFirstName(),
 		LastName:  req.GetLastName(),
 	})
 	if errReg != nil {
-		s.log.Errorf("failed to register user: %v", err)
+		s.log.Errorf("failed to register user: %v", errReg)
 		return nil, status.Error(codes.Internal, "failed to register user")
 	}
 	s.log.Infof("User registered successfully: %s", req.Username)
 
-	return &pb.RegisterResponse{Message: fmt.Sprintf("\"User registered successfully: %s", req.Username)}, nil
+	return &pb.RegisterResponse{Message: fmt.Sprintf("User registered successfully: %s", req.Username)}, nil
 }
 
 func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
@@ -68,12 +68,17 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 		return nil, status.Error(codes.NotFound, "User not found")
 	}
 
-	errPass := bcrypt.CompareHashAndPassword([]byte(user.HashPass), []byte(req.GetPassword()))
+	errPass := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(req.GetPassword()))
 	if errPass != nil {
 		s.log.Errorf("invalid password for user: %s", user.Username)
 		return nil, status.Error(codes.Unauthenticated, "invalid password")
 	}
 
-	s.log.Infof("Password registered successfully: %s", req.Username)
+	errTime := s.repo.UpdateLoginTime(ctx, req.GetUsername())
+	if errTime != nil {
+		s.log.Errorf("Failed to update login time: %s", errTime)
+	}
+
+	s.log.Infof("Login successfully: %s", req.Username)
 	return &pb.LoginResponse{Token: "token123(temp)"}, nil
 }

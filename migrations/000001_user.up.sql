@@ -1,3 +1,4 @@
+BEGIN;
 CREATE TABLE users (
                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                        email VARCHAR(255) UNIQUE NOT NULL,
@@ -5,9 +6,10 @@ CREATE TABLE users (
                        password_hash TEXT NOT NULL,
                        first_name VARCHAR(100),
                        last_name VARCHAR(100),
-                       is_active BOOLEAN DEFAULT TRUE,
-                       role VARCHAR(50) DEFAULT 'user',
                        last_login_at TIMESTAMP WITH TIME ZONE,
                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX idx_username ON users(username);
+COMMIT;
